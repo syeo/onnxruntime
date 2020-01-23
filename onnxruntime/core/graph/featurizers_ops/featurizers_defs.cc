@@ -34,6 +34,7 @@ using ONNX_NAMESPACE::OPTIONAL;
 // Forward declarations
 static void RegisterCatImputerFeaturizerVer1();
 static void RegisterDateTimeFeaturizerVer1();
+static void RegisterFromStringFeaturizerVer1();
 static void RegisterHashOneHotVectorizerFeaturizerVer1();
 static void RegisterImputationMarkerFeaturizerVer1();
 static void RegisterLabelEncoderFeaturizerVer1();
@@ -57,6 +58,7 @@ static void RegisterTimeSeriesImputerFeaturizerVer1();
 void RegisterMSFeaturizersSchemas() {
   RegisterCatImputerFeaturizerVer1();
   RegisterDateTimeFeaturizerVer1();
+  RegisterFromStringFeaturizerVer1();
   RegisterHashOneHotVectorizerFeaturizerVer1();
   RegisterImputationMarkerFeaturizerVer1();
   RegisterLabelEncoderFeaturizerVer1();
@@ -329,6 +331,93 @@ void RegisterDateTimeFeaturizerVer1() {
             propagateElemTypeFromDtypeToOutput(ctx, ONNX_NAMESPACE::TensorProto_DataType_UINT8, 20);
             if (has_shape) {
               propagateShapeFromInputToOutput(ctx, 1, 20);
+            }
+          });
+}
+
+void RegisterFromStringFeaturizerVer1() {
+  static const char* doc = R"DOC(
+        Converts from a string to a scalar type.
+
+        C++-style pseudo signature:
+          int32 execute(std::string const &value);
+          bool execute(std::string const &value);
+
+        Examples:
+          execute("True") -> true [bool]
+          execute("10") -> 10 [int32]
+  )DOC";
+
+  MS_FEATURIZERS_OPERATOR_SCHEMA(FromStringTransformer)
+      .SinceVersion(1)
+      .SetDomain(kMSFeaturizersDomain)
+      .SetDoc(doc)
+      .Attr(
+          "result_type",
+          "This is an integer that must represent one of the types that are enumerated in the OutputT constraint",
+          AttributeProto::INT)
+      .Input(
+          0,
+          "State",
+          "State generated during training that is used for prediction",
+          "T0")
+      .Input(
+          1,
+          "Input",
+          "Input string to be converted",
+          "InputT")
+      .Output(
+          0,
+          "Output",
+          "A type converted from string",
+          "OutputT")
+      .TypeConstraint(
+          "T0",
+          {"tensor(uint8)"},
+          "No information is available")
+      .TypeConstraint(
+          "InputT",
+          {"tensor(string)"},
+          "Input string to be converted")
+      .TypeConstraint(
+          "OutputT",
+          {"tensor(int8)", "tensor(int16)", "tensor(int32)", "tensor(int64)", "tensor(uint8)", "tensor(uint16)", "tensor(uint32)", "tensor(uint64)", "tensor(float)", "tensor(double)", "tensor(bool)"},
+          "No information is available")
+      .TypeAndShapeInferenceFunction(
+          [](ONNX_NAMESPACE::InferenceContext& ctx) {
+            using namespace ONNX_NAMESPACE;
+            const auto* attr_proto = ctx.getAttribute("result_type");
+            if (nullptr == attr_proto) {
+              fail_type_inference("result_type is mandatory")
+            }
+
+            auto attr_value = attr_proto->i();
+            if(!TensorProto::DataType_IsValid(static_cast<int>(attr_value))) {
+               fail_type_inference("result_type value is not valid")
+            }
+
+            auto type_int = static_cast<TensorProto::DataType>(attr_value);
+            switch (type_int) {
+                // fall through
+              case TensorProto_DataType_INT8:
+              case TensorProto_DataType_UINT8:
+              case TensorProto_DataType_INT16:
+              case TensorProto_DataType_UINT16:
+              case TensorProto_DataType_INT32:
+              case TensorProto_DataType_UINT32:
+              case TensorProto_DataType_INT64:
+              case TensorProto_DataType_UINT64:
+              case TensorProto_DataType_FLOAT:
+              case TensorProto_DataType_DOUBLE:
+              case TensorProto_DataType_BOOL:
+                break;
+              default:
+                fail_type_inference("attr result_type is expected to have an accepted type");
+                break;
+            }
+            propagateElemTypeFromDtypeToOutput(ctx, type_int, 0);
+            if (hasInputShape(ctx, 1)) {
+              propagateShapeFromInputToOutput(ctx, 1, 0);
             }
           });
 }
