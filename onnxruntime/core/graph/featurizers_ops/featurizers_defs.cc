@@ -47,6 +47,7 @@ static void RegisterMissingDummiesFeaturizerVer1();
 static void RegisterModeImputerFeaturizerVer1();
 static void RegisterNumericalizeFeaturizerVer1();
 static void RegisterOneHotEncoderFeaturizerVer1();
+static void RegisterNormalizeFeaturizerVer1();
 static void RegisterRobustScalarFeaturizerVer1();
 static void RegisterStandardScaleWrapperFeaturizerVer1();
 static void RegisterStringFeaturizerVer1();
@@ -72,6 +73,7 @@ void RegisterMSFeaturizersSchemas() {
   RegisterNumericalizeFeaturizerVer1();
   RegisterOneHotEncoderFeaturizerVer1();
   RegisterRobustScalarFeaturizerVer1();
+  RegisterNormalizeFeaturizerVer1();
   RegisterStandardScaleWrapperFeaturizerVer1();
   RegisterStringFeaturizerVer1();
   RegisterTimeSeriesImputerFeaturizerVer1();
@@ -392,8 +394,8 @@ void RegisterFromStringFeaturizerVer1() {
             }
 
             auto attr_value = attr_proto->i();
-            if(!TensorProto::DataType_IsValid(static_cast<int>(attr_value))) {
-               fail_type_inference("result_type value is not valid")
+            if (!TensorProto::DataType_IsValid(static_cast<int>(attr_value))) {
+              fail_type_inference("result_type value is not valid")
             }
 
             auto type_int = static_cast<TensorProto::DataType>(attr_value);
@@ -1192,6 +1194,68 @@ void RegisterRobustScalarFeaturizerVer1() {
               fail_type_inference("input 1 is expected to have an accepted type");
             }
 
+            if (hasInputShape(ctx, 1)) {
+              propagateShapeFromInputToOutput(ctx, 1, 0);
+            }
+          });
+}
+
+void RegisterNormalizeFeaturizerVer1() {
+  static const char* doc = R"DOC(
+      Computes the L1 norm for a provided data set and normalize every row so that
+      its L1 norm is 1
+
+      C++-style pseudo signature:
+        template <typename IteratorT> std::vector<std::double_t> execute(std::pair<IteratorT, IteratorT> const &value);
+        template <typename IteratorT> std::vector<std::double_t> execute(std::tuple<IteratorT, IteratorT> const &value);
+
+      Examples:
+        Given the training data
+        [[4, 1, 2, 2],
+         [1, 3, 9, 3],
+         [5, 7, 5, 1]]
+
+        L1 norms for each row are: [9, 16, 18]
+
+        execute([4,1,2,2]) = [4/9, 1/9, 2/9, 2/9]
+        execute([1,3,9,3]) = [1/16, 3/16, 9/16, 3/16]
+  )DOC";
+
+  MS_FEATURIZERS_OPERATOR_SCHEMA(NormalizeTransformer)
+      .SinceVersion(1)
+      .SetDomain(kMSFeaturizersDomain)
+      .SetDoc(doc)
+      .Input(
+          0,
+          "State",
+          "State generated during training that is used for prediction",
+          "T0")
+      .Input(
+          1,
+          "Input",
+          "Input broken by rows with shape [R][C] or [C] for a single row",
+          "InputT")
+      .Output(
+          0,
+          "Output",
+          "No information is available",
+          "OutputT")
+      .TypeConstraint(
+          "T0",
+          {"tensor(uint8)"},
+          "No information is available")
+      .TypeConstraint(
+          "InputT",
+          {"tensor(int8)", "tensor(uint8)", "tensor(int16)", "tensor(uint16)", "tensor(int32)", "tensor(uint32)", 
+          "tensor(int64)", "tensor(uint64)", "tensor(float)", "tensor(double)"},
+          "No information is available")
+      .TypeConstraint(
+          "OutputT",
+          { "tensor(double)"},
+          "No information is available")
+      .TypeAndShapeInferenceFunction(
+          [](ONNX_NAMESPACE::InferenceContext& ctx) {
+            propagateElemTypeFromDtypeToOutput(ctx, ONNX_NAMESPACE::TensorProto_DataType_DOUBLE, 0);
             if (hasInputShape(ctx, 1)) {
               propagateShapeFromInputToOutput(ctx, 1, 0);
             }
