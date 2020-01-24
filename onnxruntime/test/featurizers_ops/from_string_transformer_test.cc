@@ -50,5 +50,18 @@ TEST(FeaturizersTests, FromStringTransformer_int32) {
   test.Run();
 }
 
+TEST(FeaturizersTests, FromStringTransformer_string) {
+  using OutputType = std::string;
+  auto stream = GetStream<OutputType>();
+  auto dim = static_cast<int64_t>(stream.size());
+
+  OpTester test("FromStringTransformer", 1, onnxruntime::kMSFeaturizersDomain);
+  test.AddAttribute<int64_t>("result_type", ONNX_NAMESPACE::TensorProto::STRING);
+  test.AddInput<uint8_t>("State", {dim}, stream);
+  test.AddInput<std::string>("Input", {2}, {"10", "-20"});
+  test.AddOutput<OutputType>("Output", {2}, {"10", "-20"});
+  test.Run();
+}
+
 }  // namespace test
 }  // namespace onnxruntime

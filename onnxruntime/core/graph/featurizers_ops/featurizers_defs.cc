@@ -340,6 +340,7 @@ void RegisterDateTimeFeaturizerVer1() {
 void RegisterFromStringFeaturizerVer1() {
   static const char* doc = R"DOC(
         Converts from a string to a scalar type.
+        If destination type is a string, it is a passthrough.
 
         C++-style pseudo signature:
           int32 execute(std::string const &value);
@@ -383,7 +384,8 @@ void RegisterFromStringFeaturizerVer1() {
           "Input string to be converted")
       .TypeConstraint(
           "OutputT",
-          {"tensor(int8)", "tensor(int16)", "tensor(int32)", "tensor(int64)", "tensor(uint8)", "tensor(uint16)", "tensor(uint32)", "tensor(uint64)", "tensor(float)", "tensor(double)", "tensor(bool)"},
+          {"tensor(int8)", "tensor(int16)", "tensor(int32)", "tensor(int64)", "tensor(uint8)", "tensor(uint16)", "tensor(uint32)", "tensor(uint64)",
+          "tensor(float)", "tensor(double)", "tensor(bool)", "tensor(string)"},
           "No information is available")
       .TypeAndShapeInferenceFunction(
           [](ONNX_NAMESPACE::InferenceContext& ctx) {
@@ -412,6 +414,7 @@ void RegisterFromStringFeaturizerVer1() {
               case TensorProto_DataType_FLOAT:
               case TensorProto_DataType_DOUBLE:
               case TensorProto_DataType_BOOL:
+              case TensorProto_DataType_STRING:
                 break;
               default:
                 fail_type_inference("attr result_type is expected to have an accepted type");

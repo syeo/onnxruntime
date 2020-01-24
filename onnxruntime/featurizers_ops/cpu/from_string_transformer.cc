@@ -40,6 +40,20 @@ struct FromStringTransformerImpl {
   }
 };
 
+template <>
+struct FromStringTransformerImpl<std::string> {
+  void operator()(OpKernelContext* ctx) const {
+    const auto* input_tensor(ctx->Input<Tensor>(1));
+    const std::string* input_data(input_tensor->Data<std::string>());
+    const int64_t num_items = input_tensor->Shape().Size();
+
+    // Prepare the output
+    Tensor* output_tensor(ctx->Output(0, input_tensor->Shape()));
+    std::string* output_data(output_tensor->MutableData<std::string>());
+    std::copy(input_data, input_data + num_items, output_data);
+  }
+};
+
 class FromStringTransformer final : public OpKernel {
  public:
   explicit FromStringTransformer(const OpKernelInfo& info) : OpKernel(info),
@@ -52,7 +66,7 @@ class FromStringTransformer final : public OpKernel {
 
   Status Compute(OpKernelContext* ctx) const override {
     utils::MLTypeCallDispatcher<FromStringTransformerImpl, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t,
-                                int64_t, uint64_t, float, double, bool>
+                                int64_t, uint64_t, float, double, bool, std::string>
         t_disp(result_type_);
     t_disp.Invoke(ctx);
     return Status::OK();
