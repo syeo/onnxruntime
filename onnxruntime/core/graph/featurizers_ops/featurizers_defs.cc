@@ -48,10 +48,12 @@ static void RegisterModeImputerFeaturizerVer1();
 static void RegisterNumericalizeFeaturizerVer1();
 static void RegisterOneHotEncoderFeaturizerVer1();
 static void RegisterNormalizeFeaturizerVer1();
+static void RegisterPCAFeaturizerVer1();
 static void RegisterRobustScalarFeaturizerVer1();
 static void RegisterStandardScaleWrapperFeaturizerVer1();
 static void RegisterStringFeaturizerVer1();
 static void RegisterTimeSeriesImputerFeaturizerVer1();
+static void RegisterTruncatedSVDFeaturizerVer1();
 
 // ----------------------------------------------------------------------
 // ----------------------------------------------------------------------
@@ -72,11 +74,13 @@ void RegisterMSFeaturizersSchemas() {
   RegisterModeImputerFeaturizerVer1();
   RegisterNumericalizeFeaturizerVer1();
   RegisterOneHotEncoderFeaturizerVer1();
+  RegisterPCAFeaturizerVer1();
   RegisterRobustScalarFeaturizerVer1();
   RegisterNormalizeFeaturizerVer1();
   RegisterStandardScaleWrapperFeaturizerVer1();
   RegisterStringFeaturizerVer1();
   RegisterTimeSeriesImputerFeaturizerVer1();
+  RegisterTruncatedSVDFeaturizerVer1();
 }
 
 // ----------------------------------------------------------------------
@@ -385,7 +389,7 @@ void RegisterFromStringFeaturizerVer1() {
       .TypeConstraint(
           "OutputT",
           {"tensor(int8)", "tensor(int16)", "tensor(int32)", "tensor(int64)", "tensor(uint8)", "tensor(uint16)", "tensor(uint32)", "tensor(uint64)",
-          "tensor(float)", "tensor(double)", "tensor(bool)", "tensor(string)"},
+           "tensor(float)", "tensor(double)", "tensor(bool)", "tensor(string)"},
           "No information is available")
       .TypeAndShapeInferenceFunction(
           [](ONNX_NAMESPACE::InferenceContext& ctx) {
@@ -1136,6 +1140,60 @@ void RegisterOneHotEncoderFeaturizerVer1() {
           });
 }
 
+void RegisterPCAFeaturizerVer1() {
+  static const char* doc = R"DOC(
+      Principal component analysis and matrix projection
+
+      C++-style pseudo signature:
+        template <typename MatrixT> MatrixT execute(MatrixT const &value);
+
+      Examples:
+        Assuming the training matrix A
+        By applying PCA we get the eigenvector P[p, q].
+        P is obtained via State input to deserialize the transformer
+        the projecting matrix of an input matrix X[m][m] is X*P^T [m][p]
+  )DOC";
+
+  MS_FEATURIZERS_OPERATOR_SCHEMA(PCATransformer)
+      .SinceVersion(1)
+      .SetDomain(kMSFeaturizersDomain)
+      .SetDoc(doc)
+      .Input(
+          0,
+          "State",
+          "State generated during training that is used for prediction",
+          "T0")
+      .Input(
+          1,
+          "X",
+          "matrix X[M][N]",
+          "T")
+      .Output(
+          0,
+          "Output",
+          "matrix X*P^T [M][P]",
+          "T")
+      .TypeConstraint(
+          "T0",
+          {"tensor(uint8)"},
+          "No information is available")
+      .TypeConstraint(
+          "T",
+          {"tensor(float)", "tensor(double)"},
+          "No information is available")
+      .TypeAndShapeInferenceFunction(
+          [](ONNX_NAMESPACE::InferenceContext& ctx) {
+            ONNX_NAMESPACE::propagateElemTypeFromInputToOutput(ctx, 1, 0);
+            if (hasInputShape(ctx, 1)) {
+              const auto& input1_shape = getInputShape(ctx, 1);
+              ONNX_NAMESPACE::TensorShapeProto shape_0;
+              *shape_0.add_dim() = input1_shape.dim(0);
+              shape_0.add_dim(); // unknown at this time
+              ONNX_NAMESPACE::updateOutputShape(ctx, 0, shape_0);
+            }
+          });
+}
+
 void RegisterRobustScalarFeaturizerVer1() {
   static const char* doc = R"DOC(
         MinMaxScalarEstimator + centering?
@@ -1249,12 +1307,12 @@ void RegisterNormalizeFeaturizerVer1() {
           "No information is available")
       .TypeConstraint(
           "InputT",
-          {"tensor(int8)", "tensor(uint8)", "tensor(int16)", "tensor(uint16)", "tensor(int32)", "tensor(uint32)", 
-          "tensor(int64)", "tensor(uint64)", "tensor(float)", "tensor(double)"},
+          {"tensor(int8)", "tensor(uint8)", "tensor(int16)", "tensor(uint16)", "tensor(int32)", "tensor(uint32)",
+           "tensor(int64)", "tensor(uint64)", "tensor(float)", "tensor(double)"},
           "No information is available")
       .TypeConstraint(
           "OutputT",
-          { "tensor(double)"},
+          {"tensor(double)"},
           "No information is available")
       .TypeAndShapeInferenceFunction(
           [](ONNX_NAMESPACE::InferenceContext& ctx) {
@@ -1535,6 +1593,59 @@ void RegisterTimeSeriesImputerFeaturizerVer1() {
               shape.add_dim();
               *shape.add_dim() = input3_shape.dim(1);
               ONNX_NAMESPACE::updateOutputShape(ctx, 3, shape);
+            }
+          });
+}
+
+void RegisterTruncatedSVDFeaturizerVer1() {
+  static const char* doc = R"DOC(
+      Dimensionality reduction using truncated SVD algorithm
+
+      C++-style pseudo signature:
+        template <typename MatrixT> MatrixT execute(MatrixT const &value);
+
+      Examples:
+        Assuming the training matrix A
+        By applying TruncatedSVD we get the right singular vector P [P][Q]
+        the projecting matrix of an input matrix X is X*P[M][Q]
+  )DOC";
+
+  MS_FEATURIZERS_OPERATOR_SCHEMA(TruncatedSVDTransformer)
+      .SinceVersion(1)
+      .SetDomain(kMSFeaturizersDomain)
+      .SetDoc(doc)
+      .Input(
+          0,
+          "State",
+          "State generated during training that is used for prediction",
+          "T0")
+      .Input(
+          1,
+          "X",
+          "matrix X[M][N]",
+          "T")
+      .Output(
+          0,
+          "Output",
+          "matrix X*P^T [M][Q]",
+          "T")
+      .TypeConstraint(
+          "T0",
+          {"tensor(uint8)"},
+          "No information is available")
+      .TypeConstraint(
+          "T",
+          {"tensor(float)", "tensor(double)"},
+          "No information is available")
+      .TypeAndShapeInferenceFunction(
+          [](ONNX_NAMESPACE::InferenceContext& ctx) {
+            ONNX_NAMESPACE::propagateElemTypeFromInputToOutput(ctx, 1, 0);
+            if (hasInputShape(ctx, 1)) {
+              const auto& input1_shape = getInputShape(ctx, 1);
+              ONNX_NAMESPACE::TensorShapeProto shape_0;
+              *shape_0.add_dim() = input1_shape.dim(0);
+              shape_0.add_dim();  // unknown at this time
+              ONNX_NAMESPACE::updateOutputShape(ctx, 0, shape_0);
             }
           });
 }
