@@ -59,7 +59,7 @@ option(onnxruntime_USE_FEATURIZERS "Build ML Featurizers support" OFF)
 option(onnxruntime_USE_NGRAPH "Build with nGraph support" OFF)
 option(onnxruntime_USE_OPENBLAS "Use openblas" OFF)
 option(onnxruntime_DEV_MODE "Enable developer warnings and treat most of them as error." OFF)
-option(onnxruntime_USE_JEMALLOC "Use jecmalloc" OFF)
+option(onnxruntime_USE_JEMALLOC "Use jemalloc" OFF)
 option(onnxruntime_MSVC_STATIC_RUNTIME "Compile for the static CRT" OFF)
 option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" ON)
 option(onnxruntime_USE_PREINSTALLED_EIGEN "Use pre-installed EIGEN. Need to provide eigen_SOURCE_PATH if turn this on." OFF)
@@ -75,8 +75,9 @@ option(onnxruntime_USE_BRAINSLICE "Build with BrainSlice" OFF)
 option(onnxruntime_USE_TENSORRT "Build with TensorRT support" OFF)
 option(onnxruntime_ENABLE_LTO "Enable link time optimization" OFF)
 option(onnxruntime_CROSS_COMPILING "Cross compiling onnx runtime" OFF)
-option(onnxruntime_BUILD_SERVER "Build ONNX Runtime Server" OFF)
-option(onnxruntime_USE_FULL_PROTOBUF "Use full protobuf" OFF)
+
+#It's preferred to turn it OFF when onnxruntime is dynamically linked to PROTOBUF
+option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DISABLE_CONTRIB_OPS "Disable contrib ops" OFF)
 option(tensorflow_C_PACKAGE_PATH "Path to tensorflow C package installation dir")
 option(onnxruntime_ENABLE_LANGUAGE_INTEROP_OPS "Enable operator implemented in language other than cpp" OFF)
@@ -85,6 +86,19 @@ option(onnxruntime_USE_DML "Build with DirectML support" OFF)
 option(onnxruntime_USE_ACL "Build with ACL support" OFF)
 option(onnxruntime_ENABLE_INSTRUMENT "Enable Instrument with Event Tracing for Windows (ETW)" OFF)
 option(onnxruntime_USE_TELEMETRY "Build with Telemetry" OFF)
+#Please be aware, by default Protobuf_USE_STATIC_LIBS is OFF. You have to set Protobuf_USE_STATIC_LIBS properly when onnxruntime_PREFER_SYSTEM_LIB is ON
+#see:https://cmake.org/cmake/help/v3.16/module/FindProtobuf.html
+#If you have already installed protobuf(or the others) in your system at the default system paths(like /usr/include), then please set this variable ON. Otherwise onnxruntime will see two different protobuf versions and we won't know which one will be used, the worst case is onnxruntime may pick up header files from one of them but the libs from the other one.
+#It's default OFF because it's experimental now.
+option(onnxruntime_PREFER_SYSTEM_LIB "Experimental: Build with the preinstalled libraries in your system" OFF)
+
+#We have a check here but most of the cmake users don't know the Protobuf_USE_STATIC_LIBS 
+# variable exists and may leave it in a wrong state.
+if(onnxruntime_USE_FULL_PROTOBUF AND NOT Protobuf_USE_STATIC_LIBS)
+  #Indeed here should be a warning, not a fatal error. ONNX Runtime itself can work in such a 
+  #setting but it may cause compatibility issue when ONNX Runtime is integrated with the other ONNX ecosystem softwares.
+  message(FATAL_ERROR "Please use only one of onnxruntime_USE_FULL_PROTOBUF, Protobuf_USE_STATIC_LIBS")
+endif()
 
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "Build protobuf tests" FORCE)
 #nsync tests failed on Mac Build
@@ -135,11 +149,11 @@ if(onnxruntime_ENABLE_LTO)
       message(WARNING "IPO is not supported by this compiler")
       set(onnxruntime_ENABLE_LTO OFF)
     else()
+      set (CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
       if(UNIX)
         set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
         set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto")
         set (CMAKE_LDFLAGS "${CMAKE_CXX_FLAGS} -flto")
-        set (CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
       endif()
     endif()
 endif()
@@ -165,6 +179,8 @@ endif()
 #must after OpenMP settings
 find_package(Threads)
 
+#Set global compile flags for all the source code(including third_party code like protobuf)
+#This section must be before any add_subdirectory, otherwise build may fail because /MD,/MT mismatch
 if (MSVC)
   if (onnxruntime_MSVC_STATIC_RUNTIME)
     # set all of our submodules to static runtime
@@ -228,7 +244,26 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstack-protector-strong")
 endif()
 
-find_package(PNG)
+#Dependencies
+if (onnxruntime_BUILD_UNIT_TESTS)
+  if(onnxruntime_PREFER_SYSTEM_LIB)
+    find_package(GTest CONFIG)
+  endif()
+  if(NOT TARGET GTest::gtest)
+    message("Use gtest from submodule")
+    # gtest and gmock
+    add_subdirectory(${PROJECT_SOURCE_DIR}/external/googletest EXCLUDE_FROM_ALL)
+    set_target_properties(gmock PROPERTIES FOLDER "External/GTest")
+    set_target_properties(gmock_main PROPERTIES FOLDER "External/GTest")
+    set_target_properties(gtest PROPERTIES FOLDER "External/GTest")
+    set_target_properties(gtest_main PROPERTIES FOLDER "External/GTest")
+    add_library(GTest::gmock ALIAS gmock)
+    add_library(GTest::gmock_main ALIAS gmock_main)
+    add_library(GTest::gtest ALIAS gtest)
+    add_library(GTest::gtest_main ALIAS gtest_main)
+  endif()
+endif()
+
 set(ENABLE_DATE_TESTING  OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_TZ_DB  ON CACHE BOOL "" FORCE)
 set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -251,44 +286,68 @@ endif()
 #target begins from here
 
 if(onnxruntime_BUILD_BENCHMARKS)
-  if(NOT TARGET benchmark)
+  if(onnxruntime_PREFER_SYSTEM_LIB)
+    find_package(benchmark)
+  endif()
+  if(NOT TARGET benchmark::benchmark)
+    message("Use benchmark from submodule")
     # We will not need to test benchmark lib itself.
     set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark testing as we don't need it.")
     # We will not need to install benchmark since we link it statically.
     set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Disable benchmark install to avoid overwriting vendor install.")
     add_subdirectory(${PROJECT_SOURCE_DIR}/external/onnx/third_party/benchmark EXCLUDE_FROM_ALL)
-  endif()
+  endif()  
 endif()
 
-add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)
+if(onnxruntime_USE_NSYNC)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)
+endif()
+
 # External dependencies
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/external)
+
+#protobuf begin
 
 #Here we support two build mode:
 #1. if ONNX_CUSTOM_PROTOC_EXECUTABLE is set, build Protobuf from source, except protoc.exe. This mode is mainly
 #   for cross-compiling
 #2. if ONNX_CUSTOM_PROTOC_EXECUTABLE is not set, Compile everything(including protoc) from source code.
 
-
-# use protobuf as a submodule
-if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-  set(protobuf_BUILD_PROTOC_BINARIES OFF CACHE BOOL "Build protobuf tests" FORCE)
+if(onnxruntime_PREFER_SYSTEM_LIB)
+  set(protobuf_MODULE_COMPATIBLE ON)
+  find_package(protobuf)
 endif()
 
-add_subdirectory(${PROJECT_SOURCE_DIR}/external/protobuf/cmake EXCLUDE_FROM_ALL)
-set_target_properties(libprotobuf PROPERTIES FOLDER "External/Protobuf")
-set_target_properties(libprotobuf-lite PROPERTIES FOLDER "External/Protobuf")
-if(TARGET libprotoc)
-  set_target_properties(libprotoc PROPERTIES FOLDER "External/Protobuf")
-  add_executable(protobuf::protoc ALIAS protoc)
-endif()
-if(TARGET protoc)
-  set_target_properties(protoc PROPERTIES FOLDER "External/Protobuf")
-endif()
-if (onnxruntime_USE_FULL_PROTOBUF)
-  add_library(protobuf::libprotobuf ALIAS libprotobuf)
+
+if(Protobuf_FOUND OR Protobuf_FOUND)
+  message("Use protobuf from preinstalled system lib")
+  if (onnxruntime_USE_FULL_PROTOBUF)
+    set(PROTOBUF_LIB protobuf::libprotobuf)
+  else()
+    set(PROTOBUF_LIB protobuf::libprotobuf-lite)
+  endif()
 else()
-  add_library(protobuf::libprotobuf ALIAS libprotobuf-lite)
+  message("Use protobuf from submodule")
+  # use protobuf as a submodule
+  if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(protobuf_BUILD_PROTOC_BINARIES OFF CACHE BOOL "Build protobuf tests" FORCE)
+  endif()
+
+  add_subdirectory(${PROJECT_SOURCE_DIR}/external/protobuf/cmake EXCLUDE_FROM_ALL)
+  if(TARGET libprotoc)
+    set_target_properties(libprotoc PROPERTIES FOLDER "External/Protobuf")
+    add_executable(protobuf::protoc ALIAS protoc)
+  endif()
+  if(TARGET protoc)
+    set_target_properties(protoc PROPERTIES FOLDER "External/Protobuf")
+  endif()
+  if (onnxruntime_USE_FULL_PROTOBUF)
+    add_library(protobuf::libprotobuf ALIAS libprotobuf)
+    set(PROTOBUF_LIB libprotobuf)
+  else()
+    add_library(protobuf::libprotobuf ALIAS libprotobuf-lite)
+    set(PROTOBUF_LIB libprotobuf-lite)
+  endif()
 endif()
 
 if(UNIX AND onnxruntime_ENABLE_LTO)
@@ -296,6 +355,8 @@ if(UNIX AND onnxruntime_ENABLE_LTO)
   target_link_options(protoc PRIVATE "-Wl,--no-as-needed")
 endif()
 include(protobuf_function.cmake)
+#protobuf end
+
 
 if (onnxruntime_DISABLE_CONTRIB_OPS)
   add_definitions(-DDISABLE_CONTRIB_OPS)
@@ -318,20 +379,23 @@ if (onnxruntime_USE_OPENBLAS AND onnxruntime_USE_EIGEN_FOR_BLAS)
   message(FATAL_ERROR "use one of onnxruntime_USE_OPENBLAS, onnxruntime_USE_EIGEN_FOR_BLAS")
 endif()
 
-# if ON put all the unit tests in a single project so that code coverage is more comprehensive.
-# defaulting to that and most likely removing option to have separate unit test projects in the near future.
-set(SingleUnitTestProject ON)
-if (onnxruntime_SPLIT_UNIT_TEST_PROJECTS)
-  set(SingleUnitTestProject OFF)
-endif()
-
 get_filename_component(ONNXRUNTIME_ROOT "${ONNXRUNTIME_ROOT}" ABSOLUTE)
 get_filename_component(REPO_ROOT "${REPO_ROOT}" ABSOLUTE)
 set(ONNXRUNTIME_INCLUDE_DIR ${REPO_ROOT}/include/onnxruntime)
 
+
 add_subdirectory(external/date EXCLUDE_FROM_ALL)
-add_subdirectory(external/re2 EXCLUDE_FROM_ALL)
-set_target_properties(re2 PROPERTIES FOLDER "External/re2")
+
+if(onnxruntime_PREFER_SYSTEM_LIB)
+  find_package(re2)  
+endif()
+
+if(NOT TARGET re2::re2)
+  add_subdirectory(external/re2 EXCLUDE_FROM_ALL)
+  set_target_properties(re2 PROPERTIES FOLDER "External/re2")
+  add_library(re2::re2 ALIAS re2)
+  set(RE2_INCLUDE_DIR ${REPO_ROOT}/cmake/external/re2)
+endif()
 
 # bounds checking behavior.
 # throw instead of calling terminate if there's a bounds checking violation.
@@ -343,10 +407,11 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DGSL_UNENFORCED_ON_CONT
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -DGSL_UNENFORCED_ON_CONTRACT_VIOLATION")
 
 include(eigen)
+
 #onnxruntime_EXTERNAL_LIBRARIES could contain onnx, onnx_proto,libprotobuf, cuda/cudnn, jemalloc,
 # dnnl/mklml, openblas, onnxruntime_codegen_tvm, tvm, nnvm_compiler and pthread
 # pthread is always at the last
-set(onnxruntime_EXTERNAL_LIBRARIES onnx onnx_proto protobuf::libprotobuf re2)
+set(onnxruntime_EXTERNAL_LIBRARIES onnx onnx_proto ${PROTOBUF_LIB} re2::re2)
 
 function(onnxruntime_add_include_to_target dst_target)
     foreach(src_target ${ARGN})
@@ -355,7 +420,7 @@ function(onnxruntime_add_include_to_target dst_target)
     endforeach()
 endfunction()
 
-set(onnxruntime_EXTERNAL_DEPENDENCIES onnx_proto re2)
+set(onnxruntime_EXTERNAL_DEPENDENCIES onnx_proto)
 
 # ACL
 if (onnxruntime_USE_ACL)
@@ -450,6 +515,8 @@ if (WIN32)
     string(APPEND CMAKE_CXX_FLAGS " /MP")
     #in order to fix this warning, we need C++17 so that we can use 'if constexpr'
     string(APPEND CMAKE_CXX_FLAGS " /wd4127")
+    # class needs to have dll-interface to be used by clients
+    string(APPEND CMAKE_CXX_FLAGS " /wd4251")
     if (onnxruntime_ENABLE_STATIC_ANALYSIS)
         string(APPEND CMAKE_CXX_FLAGS
             " /analyze:WX- "
@@ -716,20 +783,22 @@ endif()
 #names in this var must match the directory names under onnxruntime/core/providers
 set(ONNXRUNTIME_PROVIDER_NAMES cpu)
 
-include(onnxruntime_common.cmake)
-include(onnxruntime_graph.cmake)
-include(onnxruntime_framework.cmake)
-include(onnxruntime_util.cmake)
-#The next file will define 'onnxruntime_libs' cmake var
-include(onnxruntime_providers.cmake)
-include(onnxruntime_optimizer.cmake)
-include(onnxruntime_session.cmake)
-include(onnxruntime_mlas.cmake)
+foreach(target_name onnxruntime_common onnxruntime_graph onnxruntime_framework onnxruntime_util onnxruntime_providers onnxruntime_optimizer onnxruntime_session onnxruntime_mlas)
+  include(${target_name}.cmake)
+  if (MSVC)
+    target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>" "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
+  endif()
+endforeach()
+
 
 if(onnxruntime_USE_FEATURIZERS)
   add_definitions(-DML_FEATURIZERS)
   # Fetch and build featurizers
   include(external/featurizers.cmake)
+endif()
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+  list(APPEND onnxruntime_EXTERNAL_LIBRARIES log)
 endif()
 
 if(WIN32)
@@ -742,18 +811,12 @@ else()
   list(APPEND onnxruntime_EXTERNAL_LIBRARIES ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-  list(APPEND onnxruntime_EXTERNAL_LIBRARIES log)
-endif()
+
 
 #The following files may use the 'onnxruntime_libs' and 'onnxruntime_EXTERNAL_LIBRARIES' vars
 
 if (onnxruntime_BUILD_SHARED_LIB)
   include(onnxruntime.cmake)
-endif()
-
-if (onnxruntime_BUILD_SERVER)
-  include(onnxruntime_server.cmake)
 endif()
 
 if (onnxruntime_BUILD_JAVA)
@@ -773,16 +836,6 @@ if (onnxruntime_BUILD_UNIT_TESTS)
   # we need to make sure this is turned off since it
   # turned ON by the previous step when building a shared lib
   set(CMAKE_SKIP_BUILD_RPATH OFF)
-  # gtest and gmock
-  add_subdirectory(${PROJECT_SOURCE_DIR}/external/googletest EXCLUDE_FROM_ALL)
-  set_target_properties(gmock PROPERTIES FOLDER "External/GTest")
-  set_target_properties(gmock_main PROPERTIES FOLDER "External/GTest")
-  set_target_properties(gtest PROPERTIES FOLDER "External/GTest")
-  set_target_properties(gtest_main PROPERTIES FOLDER "External/GTest")
-  if(UNIX)
-    target_compile_options(gmock PRIVATE "-w")
-    target_compile_options(gtest PRIVATE "-w")
-  endif()
   include(onnxruntime_unittests.cmake)
 endif()
 
